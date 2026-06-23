@@ -1,120 +1,285 @@
-# AI Cubpet Native Demo
+# AI Cubpet
 
-`ai-cubpet` is the K1 Cubpet native demo package. The project is organized like
-`application/native/omni_agent`, but it keeps only the local pieces needed for a
-demo: peripherals, dual-channel audio input, WebRTC AEC, Silero VAD, DOA,
-SenseVoice ASR and simple voice-to-motion commands.
+SpacemiT K1 Cubpet 本地语音交互应用，集成 Qt UI、DDS 通信、4 声道采集、WebRTC AGC、Silero VAD、SenseVoice ASR、关键词动作分发和电机控制。
 
-Cloud dialog, LLM, TTS, MCP and voiceprint are intentionally not included. The
-UI process runs separately and is managed together with the voice process by
-`ai_cubpet_daemon`.
+`ai_cubpet_daemon` 是推荐的用户入口。它会自动准备 UI 运行环境、启动 `ai-cubpet-ui` 和 `ai-cubpet`，并把日志写到 `~/.cache/ai-cubpet/logs/`。普通使用不需要手动启动 UI 或裸跑 `ai-cubpet`。
 
-## Layout
+## 快速开始
 
-- `include/`: public headers for the local voice demo skeleton.
-- `src/`: reusable voice pipeline, DOA runtime, keyword routing and motor
-  actions.
-- `examples/peripherals.c`: the original peripheral aggregate demo.
-- `examples/main.cpp`: local voice-control demo entry point.
-- `cmake/`: third-party dependency helpers copied from `omni_agent`, including
-  the WebRTC audio-processing build.
+在 SDK workspace 中编译并部署：
 
-## Targets
-
-- `ai-cubpet`: local voice-control demo.
-- `ai_cubpet_daemon`: process manager for `ai-cubpet-ui` and `ai-cubpet`.
-- `ai-cubpet-ui`: DDS-driven Qt UI process.
-- `ai-cubpet-peripherals`: peripheral CLI demo. This builds from
-  `examples/peripherals.c` when `AI_CUBPET_BUILD_PERIPHERALS_DEMO=ON`.
-
-Development-only targets:
-
-- `ai-cubpet-ui-demo`: standalone keyboard UI smoke test.
-- `ai-cubpet-dds-test-pub`: DDS media command publisher for UI debugging.
-
-The development-only targets are not built or installed by default. Pass
-`AI_CUBPET_BUILD_TEST_TOOLS=ON` to enable them.
-
-## Build
-
-Configure only the peripheral demo:
-
-```sh
-cmake -S application/native/ai-cubpet -B build/ai-cubpet \
-  -DAI_CUBPET_BUILD_VOICE_DEMO=OFF
-cmake --build build/ai-cubpet
+```bash
+cd /root/workspace/spacemit-ai-cubpet
+source build/envsetup.sh
+lunch k1-ai-cubpet
+./build/build.sh package application/native/ai-cubpet
+./build/build.sh deploy-rootfs
 ```
 
-Configure with the local voice demo:
+启动：
 
-```sh
-cmake -S application/native/ai-cubpet -B build/ai-cubpet \
-  -DAI_CUBPET_BUILD_VOICE_DEMO=ON
-cmake --build build/ai-cubpet
+```bash
+output/staging/bin/ai_cubpet_daemon start
+output/staging/bin/ai_cubpet_daemon status
+output/staging/bin/ai_cubpet_daemon logs
+output/staging/bin/ai_cubpet_daemon stop
 ```
 
-The `k1-ai-cubpet` target enables the audio, DOA, ASR and VAD SDK packages.
-WebRTC audio processing is fetched and built through `cmake/webrtc_audio_processing.cmake`
-when `AI_CUBPET_USE_AEC=ON`, which is the default for this demo. Pass
-`-DAI_CUBPET_USE_AEC=OFF` to build the old capture-only path.
+如果 `source build/envsetup.sh` 后 `output/staging/bin` 已在 `PATH` 中，也可以直接使用：
 
-## Demo Flow
-
-The intended local voice-control flow is:
-
-```text
-ES8326 dual-channel mic --raw stereo--> DOA angle
-ES8326 speech channel + ES7243 reference -> WebRTC AEC/NS -> Silero VAD
-    -> SenseVoice ASR -> keyword routing -> Cubpet motor action + DDS GIF update
-```
-
-The voice demo listens on the local microphone and dispatches the first matched
-keyword to the motor action thread:
-
-```sh
-ai-cubpet --aec --input 0 --channels 2 --ref-input 1 \
-  --vad-threshold 0.30 --vad-stop-threshold 0.20 --silence-ms 500
-```
-
-When DDS is enabled, recognized local commands publish `ToyCommand::CUSTOM_MEDIA`
-to `ToyCommand_Msg` with absolute GIF and audio paths under `share/ai-cubpet/gif`
-and `share/ai-cubpet/audio` next to the SDK-installed binary. Set
-`AI_CUBPET_GIF_DIR` and `AI_CUBPET_AUDIO_DIR` to override those directories. Set
-`AI_CUBPET_DDS_DOMAIN_ID` on both publisher and subscriber if the deployment uses
-a non-zero DDS domain. Use `--no-ui-dds` to disable UI updates for audio-only
-tests.
-
-For product-style use, start both UI and voice through the daemon:
-
-```sh
-ai_cubpet_daemon config-init
+```bash
 ai_cubpet_daemon start
 ai_cubpet_daemon status
 ai_cubpet_daemon logs
 ai_cubpet_daemon stop
 ```
 
-The default config is `~/.config/ai-cubpet/ai_cubpet.json`. It keeps the
-product path used on K1: 16 kHz, 4-channel capture, `speech_channel=1`,
-WebRTC AGC enabled, DDS enabled, and Qt UI launched as user `initer` on the
-Wayland display. Use `ai_cubpet_daemon config-show` to inspect the merged
-runtime config.
+首次启动会自动下载缺失的 GIF 和音频资源，也会触发 VAD/ASR 模型准备，耗时会比后续启动更长。启动成功后，可以直接说 `摇摇头`、`点点头`、`摇尾巴` 等命令观察 UI、音频和电机动作。
 
-Run the DDS UI subscriber manually only for debugging:
+## 运行入口
 
-```sh
+```text
+ai_cubpet_daemon [--config FILE] <command>
+```
+
+| 命令 | 说明 |
+| --- | --- |
+| `start` | 启动 daemon、UI 进程和语音控制进程 |
+| `restart` | 先停止再启动 |
+| `stop` | 停止 daemon、UI 和语音控制进程 |
+| `status` | 显示 daemon / UI / voice PID 和当前日志路径 |
+| `logs` | 跟随当前 daemon 日志 |
+| `config-init [--force]` | 写入默认配置；`--force` 覆盖已有配置 |
+| `config-show` | 输出合并后的有效配置 |
+
+默认配置文件：
+
+```text
+~/.config/ai-cubpet/ai_cubpet.json
+```
+
+如果设置了 `XDG_CONFIG_HOME`，配置目录会变为：
+
+```text
+$XDG_CONFIG_HOME/ai-cubpet/ai_cubpet.json
+```
+
+## 默认配置
+
+首次 `start` 会自动写入缺失的默认配置。需要手动生成或重置配置时：
+
+```bash
+ai_cubpet_daemon config-init
+ai_cubpet_daemon config-init --force
+ai_cubpet_daemon config-show
+```
+
+核心默认值：
+
+```json
+{
+  "audio": {
+    "input": -1,
+    "input_device_hints": ["SPV Composite", "USB Audio"],
+    "rate": 16000,
+    "channels": 4,
+    "speech_channel": 1
+  },
+  "dds": {
+    "enabled": true,
+    "domain_id": 0
+  },
+  "agc": {
+    "enabled": true
+  },
+  "ui": {
+    "enabled": true,
+    "user": "initer",
+    "qt_qpa_platform": "wayland"
+  }
+}
+```
+
+`audio.input = -1` 表示按 `input_device_hints` 自动匹配录音设备。默认优先选择名称包含 `SPV Composite` 或 `USB Audio` 的输入设备，避免刷机、HDMI 插拔或 ALSA card 顺序变化导致固定数字 index 失效。确实需要固定设备时，把 `audio.input` 改成非负 PortAudio 设备 index。
+
+查看当前输入设备：
+
+```bash
+ai-cubpet --list-devices
+```
+
+常用配置项：
+
+| 需求 | 修改位置 |
+| --- | --- |
+| 固定录音设备 | `audio.input` |
+| 调整设备名匹配 | `audio.input_device_hints` |
+| 修改采样率或声道数 | `audio.rate` / `audio.channels` |
+| 修改送入 VAD/ASR 的通道 | `audio.speech_channel` |
+| 调 VAD 灵敏度 | `vad.threshold` / `vad.stop_threshold` |
+| 保存 ASR 输入 WAV | `debug.save_wav` / `debug.save_wav_file` |
+| 保存原始语音通道 WAV | `debug.save_raw_wav` / `debug.save_raw_wav_file` |
+| 修改 DDS domain | `dds.domain_id` |
+| 指定 UI 资源目录 | `ui.gif_dir` / `ui.audio_dir` |
+
+## 资源下载
+
+仓库不携带 GIF 和音频资源。`ai_cubpet_daemon start` 会检查必需资源，缺失或空文件会自动下载。
+
+下载地址：
+
+```text
+https://archive.spacemit.com/spacemit-ai/model_zoo/assets/audio/
+https://archive.spacemit.com/spacemit-ai/model_zoo/assets/gif/
+```
+
+默认缓存目录优先级：
+
+1. `ui.audio_dir` / `ui.gif_dir`
+2. `AI_CUBPET_ASSET_ROOT/audio` 和 `AI_CUBPET_ASSET_ROOT/gif`
+3. `$XDG_CACHE_HOME/models/assets/audio` 和 `$XDG_CACHE_HOME/models/assets/gif`
+4. `$HOME/.cache/models/assets/audio` 和 `$HOME/.cache/models/assets/gif`
+5. `/root/.cache/models/assets/audio` 和 `/root/.cache/models/assets/gif`
+
+示例：
+
+```bash
+export AI_CUBPET_ASSET_ROOT=/home/user/.cache/models/assets
+ai_cubpet_daemon start
+```
+
+日志中看到 `/tmp/ai-cubpet-ui-runtime-<uid>/share/ai-cubpet/gif` 是正常现象。daemon 会把 UI 二进制、DDS 运行库、GIF、音频和 IDL 拷贝到 `/tmp` runtime mirror，再以 `initer` 用户启动 UI。真实下载缓存仍在上面的资源缓存目录。
+
+## 构建说明
+
+本仓库作为 SDK application 包使用，推荐在 SDK workspace 中构建：
+
+```bash
+source build/envsetup.sh
+lunch k1-ai-cubpet
+./build/build.sh package application/native/ai-cubpet
+./build/build.sh deploy-rootfs
+```
+
+`package.xml` 声明了系统依赖，包括 PortAudio、sndfile、FFTW、samplerate、libcurl、QtMultimedia、nlohmann-json、ONNX Runtime 等。SDK 构建会按包依赖检查这些系统包。
+
+CMake 默认构建以下产品二进制：
+
+| 目标 | 说明 |
+| --- | --- |
+| `ai_cubpet_daemon` | 推荐入口，管理 UI 和语音控制进程 |
+| `ai-cubpet` | 本地语音控制进程，由 daemon 启动 |
+| `ai-cubpet-ui` | DDS 驱动的 Qt UI 进程，由 daemon 启动 |
+
+默认不会安装开发调试工具。需要 DDS/UI 调试工具时：
+
+```bash
+cmake -S application/native/ai-cubpet -B build/ai-cubpet \
+  -DAI_CUBPET_BUILD_TEST_TOOLS=ON
+cmake --build build/ai-cubpet
+```
+
+可选 CMake 开关：
+
+| 开关 | 默认值 | 说明 |
+| --- | --- | --- |
+| `AI_CUBPET_BUILD_VOICE_DEMO` | `ON` | 构建 `ai-cubpet` |
+| `AI_CUBPET_BUILD_UI_DEMO` | `ON` | 构建 `ai-cubpet-ui` |
+| `AI_CUBPET_BUILD_TEST_TOOLS` | `OFF` | 构建 `ai-cubpet-dds-test-pub` 等调试工具 |
+| `AI_CUBPET_USE_AEC` | `ON` | 拉取并构建 WebRTC audio processing |
+| `AI_CUBPET_USE_DDS` | `ON` | 拉取并构建 CycloneDDS/CycloneDDS-CXX |
+
+第三方源码通过 CMake 拉取：
+
+```text
+https://gitee.com/spacemit-robotics/cyclonedds.git
+https://gitee.com/spacemit-robotics/cyclonedds-cxx.git
+https://gitee.com/spacemit-robotics/webrtc-audio-processing.git
+```
+
+## 调试
+
+查看 daemon 日志：
+
+```bash
+ai_cubpet_daemon logs
+```
+
+列出输入设备：
+
+```bash
+ai-cubpet --list-devices
+```
+
+保存调试音频：
+
+```json
+{
+  "debug": {
+    "save_wav": true,
+    "save_wav_file": "~/.cache/ai-cubpet/asr_input.wav",
+    "save_raw_wav": true,
+    "save_raw_wav_file": "~/.cache/ai-cubpet/raw_input.wav"
+  }
+}
+```
+
+裸跑 `ai-cubpet` 只用于调试，不是产品入口：
+
+```bash
+ai-cubpet --input -1 --input-device-hint "SPV Composite" \
+  --rate 16000 --channels 4 --speech-channel 1
+```
+
+单独启动 UI 也只用于调试：
+
+```bash
 ai-cubpet-ui
 ```
 
-For board-side smoke tests, configure with `AI_CUBPET_BUILD_TEST_TOOLS=ON`,
-keep `ai-cubpet-ui` running and publish one media command:
+构建调试工具后，可以手动向 UI 发布 DDS 媒体命令：
 
-```sh
-ai-cubpet-dds-test-pub --gif /tmp/cubpet-gif/02_expect.gif \
-  --audio /tmp/cubpet-audio/02_happy.wav
+```bash
+ai-cubpet-dds-test-pub --gif 03_diz.gif --audio 013_shake_head.wav
 ```
 
-`--save-wav` writes the post-AEC 16 kHz mono ASR input. `--save-raw-wav`
-writes the raw mic speech channel for A/B checks.
+## 常见问题
 
-Supported first-pass commands are `抬头`, `点头`, `摇头` and `摇尾巴`.
+### daemon 启动后很快退出
+
+先看日志：
+
+```bash
+ai_cubpet_daemon logs
+```
+
+如果看到类似：
+
+```text
+Requested 4 channels but device only has 0
+[audio] failed to start capture
+```
+
+说明录音设备选错了，通常是固定数字 index 指到了 HDMI。保持 `audio.input = -1`，并使用 `input_device_hints` 匹配 `SPV Composite`/`USB Audio`。
+
+### 日志里 GIF 路径在 `/tmp`
+
+这是 UI runtime mirror，不是下载目录。daemon 需要以 `initer` 用户运行 UI，但 `initer` 通常不能访问 `/root/workspace/...`，所以会把 UI 运行所需文件复制到：
+
+```text
+/tmp/ai-cubpet-ui-runtime-<uid>/
+```
+
+### 首次启动时间长
+
+首次启动会下载 GIF/audio 资源，也可能下载 VAD/ASR 模型。后续资源和模型存在后启动会明显更快。
+
+### UI 没有显示
+
+确认 HDMI 或 Wayland/X11 环境正常，然后看日志里的 Qt platform：
+
+```text
+starting ai-cubpet-ui with QT_QPA_PLATFORM=...
+```
+
+默认优先 Wayland，缺少 Wayland socket 时会 fallback 到可用平台。
