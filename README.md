@@ -13,7 +13,7 @@ mkdir -p ~/workspace/spacemit-ai-cubpet
 cd ~/workspace/spacemit-ai-cubpet
 repo init -u https://github.com/spacemit-robotics/manifest.git -b main -m default.xml \
   --repo-url=https://gitee.com/spacemit-robotics/git-repo \
-  -g core,agent_tools,ai_cubpet,model_zoo,multimedia
+  -g core,agent_tools,ai-cubpet,model_zoo,multimedia,peripherals
 repo sync -j4
 repo start robot-dev --all
 ```
