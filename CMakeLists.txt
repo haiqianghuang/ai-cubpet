@@ -8,7 +8,7 @@ set(CMAKE_C_EXTENSIONS OFF)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-option(AI_CUBPET_BUILD_PERIPHERALS_DEMO "Build peripheral CLI demo" OFF)
+option(AI_CUBPET_BUILD_PERIPHERALS_DEMO "Build peripheral CLI demo" ON)
 option(AI_CUBPET_BUILD_VOICE_DEMO "Build local VAD/ASR/DOA voice-control demo" ON)
 option(AI_CUBPET_BUILD_UI_DEMO "Build DDS Qt UI process" ON)
 option(AI_CUBPET_BUILD_TEST_TOOLS "Build and install development smoke-test tools" OFF)

@@ -54,7 +54,8 @@ static void print_usage(const char *prog)
     printf("Usage:\n");
     printf("  %s misc_io [get|watch] [count]\n", prog);
     printf("  %s pm [count]\n", prog);
-    printf("  %s wifi <scan|state|info|list|on|off|connect|disconnect|remove|mac> [args...]\n", prog);
+    printf("  %s wifi <scan|state|info|list|on|off|connect|disconnect|remove|mac|linkd> [args...]\n", prog);
+    printf("    wifi linkd [timeout_sec]  # soft-AP provisioning via http://192.168.1.1:8000\n");
     printf("  %s nfc [count]\n", prog);
     printf("  %s motor [all|NAME] [speed]\n", prog);
     printf("  %s fan [speed_percent] [seconds]\n", prog);
@@ -286,6 +287,99 @@ static enum wifi_mode parse_wifi_mode(const char *text)
     return WIFI_MODE_UNKNOWN;
 }
 
+static void set_default_linkd_ap_config(struct wifi_ap_config *config)
+{
+    static char ssid[] = "AI_CUBPET_AP_LINK";
+    static char psk[] = "12345678";
+
+    if (!config)
+        return;
+
+    memset(config, 0, sizeof(*config));
+    config->ssid = ssid;
+    config->psk = psk;
+    config->sec = WIFI_SEC_WPA2_PSK;
+    config->ip_addr[0] = 192;
+    config->ip_addr[1] = 168;
+    config->ip_addr[2] = 1;
+    config->ip_addr[3] = 1;
+    config->gw_addr[0] = 192;
+    config->gw_addr[1] = 168;
+    config->gw_addr[2] = 1;
+    config->gw_addr[3] = 1;
+}
+
+static void linkd_connect_cb(struct wifi_msg_data *msg)
+{
+    struct wifi_linkd_result *result;
+    struct wifi_sta_connect_param param;
+    enum wifi_status ret;
+
+    if (!msg)
+        return;
+
+    result = (struct wifi_linkd_result *)msg->private_data;
+    if (!result || !result->ssid)
+        return;
+
+    printf("[wifi][linkd] ssid=%s psk=%s\n",
+        result->ssid ? result->ssid : "(null)",
+        result->psk ? result->psk : "(null)");
+
+    memset(&param, 0, sizeof(param));
+    param.ssid = result->ssid;
+    if (result->psk && *result->psk)
+        param.password = result->psk;
+
+    ret = wifi_sta_remove_networks("TEST_AP_LINK");
+    printf("[wifi][linkd] remove temp AP profile: %d\n", ret);
+
+    ret = wifi_on(WIFI_MODE_STATION);
+    if (ret != WIFI_STATUS_SUCCESS)
+        printf("[wifi][linkd] wifi_on station failed: %d\n", ret);
+    ret = wifi_sta_connect(&param);
+    printf("[wifi][linkd] wifi_sta_connect: %d\n", ret);
+}
+
+static int run_wifi_linkd(int argc, char **argv)
+{
+    struct wifi_ap_config config;
+    int timeout_sec = parse_int(argc > 0 ? argv[0] : NULL, 300);
+    enum wifi_status ret;
+    enum wifi_status disable_ret;
+
+    if (timeout_sec <= 0)
+        timeout_sec = 300;
+
+    set_default_linkd_ap_config(&config);
+    ret = wifi_on(WIFI_MODE_AP);
+    if (ret != WIFI_STATUS_SUCCESS)
+        printf("[wifi][linkd] wifi_on ap failed: %d\n", ret);
+
+    ret = wifi_ap_enable(&config);
+    printf("[wifi][linkd] wifi_ap_enable: %d\n", ret);
+    if (ret != WIFI_STATUS_SUCCESS)
+        return 1;
+
+    printf("[wifi][linkd] connect to AP SSID=%s password=%s\n",
+        config.ssid, config.psk);
+    printf("[wifi][linkd] open http://192.168.1.1:8000 and submit target Wi-Fi\n");
+    printf("[wifi][linkd] waiting for credentials, timeout=%ds\n", timeout_sec);
+
+    ret = wifi_linkd_protocol(WIFI_LINKD_MODE_SOFTAP,
+        linkd_connect_cb, NULL, timeout_sec);
+    printf("[wifi][linkd] wifi_linkd_protocol: %d\n", ret);
+
+    if (ret != WIFI_STATUS_SUCCESS) {
+        disable_ret = wifi_ap_disable();
+        printf("[wifi][linkd] wifi_ap_disable: %d\n", disable_ret);
+    } else {
+        printf("[wifi][linkd] provisioning callback handled AP handoff\n");
+    }
+
+    return ret == WIFI_STATUS_SUCCESS ? 0 : 1;
+}
+
 static int run_wifi(int argc, char **argv)
 {
     const char *cmd = argc > 0 ? argv[0] : "state";
@@ -392,6 +486,10 @@ static int run_wifi(int argc, char **argv)
         } else {
             printf("[wifi] wifi_get_mac failed: %d\n", ret);
         }
+    } else if (strcmp(cmd, "linkd") == 0) {
+        int rc = run_wifi_linkd(argc - 1, argv + 1);
+        wifi_deinit();
+        return rc;
     } else {
         fprintf(stderr, "unknown wifi command: %s\n", cmd);
         wifi_deinit();
