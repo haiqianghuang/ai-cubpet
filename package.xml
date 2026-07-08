@@ -20,6 +20,7 @@
   <system_depend realm="target" check_kind="pkg-config" check_arg="samplerate">libsamplerate0-dev</system_depend>
   <system_depend realm="target" check_kind="pkg-config" check_arg="libcurl">libcurl4-openssl-dev</system_depend>
   <system_depend realm="target" check_kind="pkg-config" check_arg="libssl">libssl-dev</system_depend>
+  <system_depend realm="target" check_kind="command" check_arg="nmcli">network-manager</system_depend>
   <system_depend realm="target" check_kind="file" check_arg="/usr/include/nlohmann/json.hpp">nlohmann-json3-dev</system_depend>
   <system_depend realm="target" check_kind="dpkg" check_arg="qtbase5-gles-dev">qtbase5-gles-dev</system_depend>
   <system_depend realm="host" check_kind="file" check_arg="/usr/lib/qt5/bin/moc">qtbase5-dev-tools</system_depend>
